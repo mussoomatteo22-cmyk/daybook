@@ -6,13 +6,17 @@
 // Authorization header) with a test email, so they can check delivery from the app.
 //
 // Secrets (supabase secrets set ...):
-//   RESEND_API_KEY   – from resend.com
-//   FROM_EMAIL       – e.g. "Daybook <reminders@yourdomain.com>" (domain verified in Resend)
+//   Either Gmail (or any SMTP account):
+//     SMTP_HOST=smtp.gmail.com  SMTP_PORT=465  SMTP_USER=you@gmail.com  SMTP_PASS=<16-letter app password>
+//   or Resend:
+//     RESEND_API_KEY   – from resend.com
+//   FROM_EMAIL       – e.g. "Daybook <you@gmail.com>" (must be the SMTP account, or a domain verified in Resend)
 //   CRON_SECRET      – optional; if set, the cron job must send it as the x-cron-secret header
 //   APP_URL          – where your Daybook web app is hosted, for the "Open Daybook" button
 // SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are provided automatically.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 const WINDOW_MIN = 10;       // per-event reminders: catch anything due in the last 10 minutes
 const SLOT_MIN = 30;         // scheduled emails (summaries, heads-ups): send within 30 min of the chosen time
@@ -111,7 +115,17 @@ const h2 = (t: string, color = "#1B2029") => `<h2 style="font-size:15px;margin:1
 const ul = (items: string[]) => `<ul style="padding-left:18px;margin:0">${items.map(i => `<li style="margin:5px 0">${i}</li>`).join("")}</ul>`;
 const sub = (t: string, color = MUTED) => `<span style="color:${color};font-size:13px">${t}</span>`;
 
+// Sends through any SMTP account when SMTP_HOST is set (e.g. Gmail with an app password: free, ~500/day,
+// works for every recipient without owning a domain). Otherwise uses Resend's API.
 async function sendEmail(to: string, subject: string, html: string) {
+  const host = Deno.env.get("SMTP_HOST");
+  if (host) {
+    const client = new SMTPClient({ connection: { hostname: host, port: Number(Deno.env.get("SMTP_PORT") || 465), tls: true,
+      auth: { username: Deno.env.get("SMTP_USER")!, password: Deno.env.get("SMTP_PASS")! } } });
+    try { await client.send({ from: Deno.env.get("FROM_EMAIL") || Deno.env.get("SMTP_USER")!, to, subject, html, content: "auto" }); }
+    finally { await client.close(); }
+    return;
+  }
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${Deno.env.get("RESEND_API_KEY")}`, "Content-Type": "application/json" },
