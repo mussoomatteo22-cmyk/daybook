@@ -8,7 +8,9 @@ const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  const body = await req.json().catch(() => ({}));
+  // The gateway checks the public key in the Authorization header; the person's own sign-in token comes in the body.
+  const token = body.token || (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
   const { data: { user } } = token ? await sb.auth.getUser(token) : { data: { user: null } };
   if (!user) return new Response("Forbidden", { status: 403, headers: cors });
   const { error } = await sb.auth.admin.deleteUser(user.id);

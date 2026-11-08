@@ -1168,6 +1168,8 @@ function onWriteError(e) {
   else if (e && e.code === "unavailable") toast("Couldn't save just now", "Check your connection. Your change shows here and will need saving again.");
 }
 
+/* Server functions: the public key goes in the header (checked by Supabase's gateway), the person's sign-in token in the body. */
+async function callFn(name, body) { const { data: { session } } = await sb.auth.getSession(); return sb.functions.invoke(name, { body: { ...body, token: session?.access_token }, headers: { Authorization: `Bearer ${window.DAYBOOK_CONFIG.supabaseAnonKey}` } }); }
 const sb = window.supabase.createClient(window.DAYBOOK_CONFIG.supabaseUrl, window.DAYBOOK_CONFIG.supabaseAnonKey, { auth: { persistSession: true, autoRefreshToken: true } });
 async function boot() {
   applySettings();
@@ -2650,11 +2652,11 @@ document.addEventListener("click", e => {
   if (d.signout !== undefined) { try { localStorage.removeItem(LS_KEY); } catch {} return sb.auth.signOut(); }
   if (d.emailmode) { S().notif.emailMode = d.emailmode; return store.saveSettings(); }
   if (d.mail) { const M = mailPrefs(); return setMail({ [d.mail]: !M[d.mail] }); }
-  if (d.testmail !== undefined) { t.disabled = true; t.textContent = "Sending…"; sb.functions.invoke("send-reminders", { body: { test: true } }).then(({ data, error }) => { t.disabled = false; t.textContent = "Send a test"; if (error || !data || data.error) toast("Couldn't send the test", (data && (data.error || data.note)) || "Check the email setup in the README (Resend key and sender)."); else if (data.note) toast("Hold on", data.note); else toast("Test email sent", `Check ${state.email}. It can take a minute, and may land in spam the first time.`); }); return; }
+  if (d.testmail !== undefined) { t.disabled = true; t.textContent = "Sending…"; callFn("send-reminders", { test: true }).then(({ data, error }) => { t.disabled = false; t.textContent = "Send a test"; if (error || !data || data.error) toast("Couldn't send the test", (data && (data.error || data.note)) || "Check the email setup in the README (Resend key and sender)."); else if (data.note) toast("Hold on", data.note); else toast("Test email sent", `Check ${state.email}. It can take a minute, and may land in spam the first time.`); }); return; }
   if (d.delacct !== undefined) {
     if (t.dataset.armed !== "1") { t.dataset.armed = "1"; t.textContent = "Tap again to delete forever"; return toast("This can't be undone", "Every event, class, project and setting in this account will be erased."); }
     t.disabled = true; t.textContent = "Deleting…";
-    sb.functions.invoke("delete-account", { body: {} }).then(async ({ data, error }) => { if (error || !data?.ok) { t.disabled = false; t.textContent = "Delete account"; return toast("Couldn't delete the account", (data && data.error) || "Try again in a moment."); } try { localStorage.removeItem(LS_KEY); } catch {} await sb.auth.signOut(); toast("Account deleted", "Everything has been erased."); });
+    callFn("delete-account", {}).then(async ({ data, error }) => { if (error || !data?.ok) { t.disabled = false; t.textContent = "Delete account"; return toast("Couldn't delete the account", (data && data.error) || "Try again in a moment."); } try { localStorage.removeItem(LS_KEY); } catch {} await sb.auth.signOut(); toast("Account deleted", "Everything has been erased."); });
     return;
   }
   if (d.pushperm !== undefined) { if (state.devicePerm === "denied") return toast("Notifications are blocked", PLATFORM() === "iPhone" ? "Turn them on in iPhone Settings › Notifications › Daybook." : "Allow notifications for Daybook in your browser or system settings."); requestDevicePerm(); return; }

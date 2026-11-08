@@ -130,7 +130,8 @@ Deno.serve(async (req) => {
   // ---- "Send me a test email" from a signed-in person in the app ----
   const body = await req.json().catch(() => ({}));
   if (body && body.test) {
-    const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+    // The gateway checks the public key in the Authorization header; the person's own sign-in token comes in the body.
+    const token = body.token || (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     const { data: { user } } = token ? await sb.auth.getUser(token) : { data: { user: null } };
     if (!user?.email) return new Response("Forbidden", { status: 403, headers: cors });
     const key = `test:${user.id}:${Math.floor(Date.now() / 60000)}`;
