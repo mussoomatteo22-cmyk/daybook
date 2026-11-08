@@ -1,0 +1,105 @@
+# Builds the desktop installers (Mac, Windows, Linux) and the iPhone app.
+# Run it from GitHub: Actions › Build apps › Run workflow. Or push a tag like v1.0.0.
+# Finished installers appear at the bottom of the run page under "Artifacts".
+name: Build apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  desktop:
+    name: Desktop (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Mac, os: macos-latest, args: "--target universal-apple-darwin", out: "src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg" }
+          - { name: Windows, os: windows-latest, args: "", out: "src-tauri/target/release/bundle/msi/*.msi\nsrc-tauri/target/release/bundle/nsis/*.exe" }
+          - { name: Linux, os: ubuntu-22.04, args: "--bundles deb,appimage", out: "src-tauri/target/release/bundle/deb/*.deb\nsrc-tauri/target/release/bundle/appimage/*.AppImage" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.name == 'Mac' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: "src-tauri -> target" }
+      - name: Linux build libraries
+        if: matrix.name == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - run: npm ci
+      - name: Build
+        run: npx tauri build ${{ matrix.args }}
+        env:
+          # Optional: fill these repository secrets to sign and notarize the Mac app (see README).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Daybook-${{ matrix.name }}
+          path: ${{ matrix.out }}
+          if-no-files-found: error
+
+  ios:
+    name: iPhone
+    runs-on: macos-latest
+    env:
+      HAS_SIGNING: ${{ secrets.IOS_CERTIFICATE_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - name: Copy the app into the Xcode project
+        run: npx cap sync ios
+      - name: Check it builds (simulator, no signing needed)
+        run: xcodebuild -workspace ios/App/App.xcworkspace -scheme App -sdk iphonesimulator -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Zip simulator app
+        run: cd build/Build/Products/Release-iphonesimulator && zip -qr ../../../../Daybook-simulator.zip App.app
+      - uses: actions/upload-artifact@v4
+        with: { name: Daybook-iPhone-simulator, path: Daybook-simulator.zip }
+
+      # ---- Optional: signed build sent to TestFlight. Runs only when the secrets exist (see README › iPhone). ----
+      - name: Install signing certificate and profile
+        if: ${{ env.HAS_SIGNING == 'true' }}
+        env:
+          IOS_CERTIFICATE_P12: ${{ secrets.IOS_CERTIFICATE_P12 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISION_PROFILE: ${{ secrets.IOS_PROVISION_PROFILE }}
+        run: |
+          KC=$RUNNER_TEMP/build.keychain-db; PW=$(openssl rand -hex 12)
+          echo "$IOS_CERTIFICATE_P12" | base64 --decode > $RUNNER_TEMP/cert.p12
+          echo "$IOS_PROVISION_PROFILE" | base64 --decode > $RUNNER_TEMP/profile.mobileprovision
+          security create-keychain -p "$PW" $KC && security set-keychain-settings -lut 21600 $KC && security unlock-keychain -p "$PW" $KC
+          security import $RUNNER_TEMP/cert.p12 -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KC
+          security set-key-partition-list -S apple-tool:,apple: -k "$PW" $KC && security list-keychain -d user -s $KC
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles && cp $RUNNER_TEMP/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+      - name: Archive and upload to TestFlight
+        if: ${{ env.HAS_SIGNING == 'true' }}
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -archivePath $RUNNER_TEMP/Daybook.xcarchive \
+            -destination generic/platform=iOS DEVELOPMENT_TEAM=$TEAM CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" CODE_SIGN_IDENTITY="Apple Distribution" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} archive
+          cat > $RUNNER_TEMP/export.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>method</key><string>app-store-connect</string><key>teamID</key><string>$TEAM</string>
+          <key>signingStyle</key><string>manual</string><key>provisioningProfiles</key><dict><key>com.daybook.planner</key><string>$PROFILE_NAME</string></dict></dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath $RUNNER_TEMP/Daybook.xcarchive -exportOptionsPlist $RUNNER_TEMP/export.plist -exportPath $RUNNER_TEMP/out
+          mkdir -p ~/.appstoreconnect/private_keys && echo "$ASC_KEY_P8" > ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
+          xcrun altool --upload-app -f $RUNNER_TEMP/out/App.ipa -t ios --apiKey $ASC_KEY_ID --apiIssuer $ASC_ISSUER_ID

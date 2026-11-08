@@ -1,0 +1,14 @@
+{
+  "appId": "com.daybook.planner",
+  "appName": "Daybook",
+  "webDir": "web",
+  "backgroundColor": "#EEF0EC",
+  "ios": {
+    "contentInset": "never",
+    "scheme": "Daybook",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "plugins": {
+    "LocalNotifications": { "iconColor": "#2D49C8" }
+  }
+}

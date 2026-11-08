@@ -1,0 +1,26 @@
+{
+  "name": "daybook",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Daybook planner: web app (PWA), iPhone/Android app (Capacitor) and desktop app (Tauri) from one codebase.",
+  "scripts": {
+    "dev": "npx --yes serve web -l 5173",
+    "phone:sync": "npx cap sync",
+    "phone:open-ios": "npx cap open ios",
+    "phone:add-android": "npx cap add android",
+    "phone:open-android": "npx cap open android",
+    "desktop:dev": "npx tauri dev",
+    "desktop:build": "npx tauri build",
+    "desktop:icons": "npx tauri icon web/icons/icon-1024.png -o src-tauri/icons"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "6.1.2",
+    "@tauri-apps/cli": "2.0.4"
+  },
+  "dependencies": {
+    "@capacitor/android": "6.1.2",
+    "@capacitor/core": "6.1.2",
+    "@capacitor/ios": "6.1.2",
+    "@capacitor/local-notifications": "6.1.0"
+  }
+}

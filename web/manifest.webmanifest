@@ -1,0 +1,21 @@
+{
+  "name": "Daybook",
+  "short_name": "Daybook",
+  "description": "Your schedule, classes, work and projects in one planner.",
+  "start_url": "./#today",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EEF0EC",
+  "theme_color": "#1B2029",
+  "orientation": "any",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "shortcuts": [
+    { "name": "Calendar", "url": "./#calendar" },
+    { "name": "Projects", "url": "./#projects" }
+  ]
+}
