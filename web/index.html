@@ -930,6 +930,17 @@ input[type=color]{width:30px;height:26px;border:1px solid var(--line-2);border-r
 .ev-allday-l{display:flex;align-items:center;gap:10px;font-size:14px;height:40px}
 .m2-all.cont{border-top-left-radius:0;border-bottom-left-radius:0;margin-left:-6px;padding-left:13px}
 .m2-all.cont-r{border-top-right-radius:0;border-bottom-right-radius:0;margin-right:-6px}
+/* keep form fields inside their columns (date/time inputs have a wide built-in minimum) */
+.row2 > *, .row3 > *{min-width:0}
+.scrim{grid-template-columns:minmax(0,min(520px,100%))}
+.modal{min-width:0}
+.modal > *{min-width:0;max-width:100%}
+.modal .inp{min-width:0}
+.inp[type=date], .inp[type=time]{min-width:0;max-width:100%;width:100%}
+@media (max-width:860px){
+  .ev-span{grid-template-columns:1fr;gap:8px}
+  .ev-allday-l{height:auto;padding:2px 0}
+}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 
 @media (max-width:1100px){.board{grid-template-columns:minmax(0,1fr)}.w-schedule,.w-due,.w-focus{grid-column:1;grid-row:auto}}
@@ -1064,7 +1075,7 @@ function dueClass(s, done) { if (done || !s) return ""; const diff = Math.round(
 /* ---------- defaults ---------- */
 const DEFAULT_CATS = [
   { id: "class", name: "Classes", color: "#3D6FE0" },
-  { id: "appt", name: "Appointments", color: "#D9486B" },
+  { id: "appt", name: "Appointments", color: "#E6B91E" },
   { id: "work", name: "Work", color: "#D98A1E" },
   { id: "personal", name: "Personal", color: "#3A9E6E" },
   { id: "study", name: "Study", color: "#8A5CD6" }
@@ -1114,7 +1125,7 @@ const state = {
   mode: "loading", me: null, loaded: false, stale: false, readOnly: false
 };
 const S = () => state.settings;
-const cats = () => S().categories || DEFAULT_CATS;
+const cats = () => (S().categories || DEFAULT_CATS).map(c => c.id === "appt" && String(c.color).toUpperCase() === "#D9486B" ? { ...c, color: "#E6B91E" } : c);
 const catOf = x => { if (x && typeof x === "object") { if (x.classId && state.classes.has(x.classId)) { const c = state.classes.get(x.classId); return { id: "class", name: classLabel(c), color: c.color }; } if (x.projectId && state.projects.has(x.projectId)) { const p = state.projects.get(x.projectId); return { id: "project", name: p.name, color: p.color || "#8B929C" }; } if (x.cat === "custom") return { id: "custom", name: x.customLabel || "Custom", color: x.customColor || "#8B929C" }; x = x.cat; } return cats().find(c => c.id === x) || { id: x, name: "Other", color: "#8B929C" }; };
 const hostTheme = document.documentElement.getAttribute("data-theme");
 
@@ -2546,15 +2557,17 @@ function eventEditor(ev, dateS, presetCat, opts) {
   });
 }
 function projectEditor(p) {
-  const isNew = !p; const colors = cats().map(c => c.color).concat(["#1B2029", "#0F7C7A"]);
+  const isNew = !p; const colors = [...new Set([...CLASS_COLORS, ...cats().map(c => c.color), "#1B2029"])];
   p = p || { id: uid(), name: "", desc: "", due: "", color: colors[Math.floor(Math.random() * 5)], tasks: [], created: Date.now() };
   let color = p.color, armed = false;
   openModal(`<h2 style="font-size:13px;color:var(--muted);font-family:var(--f-body);font-weight:600">${isNew ? "New project" : "Edit project"}</h2>
   <input class="title-inp" id="pj-name" placeholder="Project name" value="${esc(p.name)}" autofocus>
   <label class="field"><span>What's it for?</span><textarea class="inp" id="pj-desc" placeholder="Goal, requirements, links…">${esc(p.desc)}</textarea></label>
-  <div class="row2"><label class="field"><span>Final due date</span><input class="inp" type="date" id="pj-due" value="${p.due || ""}"></label><div class="field"><span>Colour</span><div class="swatches">${colors.map(c => `<button type="button" class="sw-btn" style="--c:${c}" data-pjcolor="${c}" aria-pressed="${c === color}" aria-label="Colour ${c}"></button>`).join("")}</div></div></div>
+  <label class="field"><span>Final due date</span><input class="inp" type="date" id="pj-due" value="${p.due || ""}"></label>
+  <div class="field"><span>Colour</span><div class="swatches">${colors.map(c => `<button type="button" class="sw-btn" style="--c:${c}" data-pjcolor="${c}" aria-pressed="${c.toLowerCase() === String(color).toLowerCase()}" aria-label="Colour ${c}"></button>`).join("")}<input type="color" id="pj-ccolor" value="${color}" aria-label="Pick any colour" title="Pick any colour"></div></div>
   <div class="modal-foot">${isNew ? "" : `<button type="button" class="btn btn-danger" id="pj-del">${I.trash}<span>Delete</span></button>`}<span class="grow"></span><button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="button" class="btn btn-primary" id="pj-save">${isNew ? "Create project" : "Save"}</button></div>`, m => {
-    m.querySelectorAll("[data-pjcolor]").forEach(b => b.onclick = () => { color = b.dataset.pjcolor; m.querySelectorAll("[data-pjcolor]").forEach(x => x.setAttribute("aria-pressed", x === b)); });
+    m.querySelectorAll("[data-pjcolor]").forEach(b => b.onclick = () => { color = b.dataset.pjcolor; m.querySelectorAll("[data-pjcolor]").forEach(x => x.setAttribute("aria-pressed", x === b)); $("#pj-ccolor").value = color; });
+    $("#pj-ccolor").oninput = e => { color = e.target.value; m.querySelectorAll("[data-pjcolor]").forEach(x => x.setAttribute("aria-pressed", "false")); };
     $("#pj-save").onclick = () => {
       const name = $("#pj-name").value.trim(); if (!name) { $("#pj-name").focus(); return; }
       store.saveProject({ ...p, name, desc: $("#pj-desc").value.trim(), due: $("#pj-due").value, color });
