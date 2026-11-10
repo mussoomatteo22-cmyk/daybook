@@ -923,6 +923,13 @@ input[type=color]{width:30px;height:26px;border:1px solid var(--line-2);border-r
 }
 @media (hover:none){.mk-del{opacity:.7}}
 .mk-link{color:inherit;text-decoration:none}.mk-link:hover b{text-decoration:underline}
+
+/* multi-day events */
+.ev-span{align-items:end}
+.ev-span .field span small{font-weight:500;color:var(--faint);margin-left:4px}
+.ev-allday-l{display:flex;align-items:center;gap:10px;font-size:14px;height:40px}
+.m2-all.cont{border-top-left-radius:0;border-bottom-left-radius:0;margin-left:-6px;padding-left:13px}
+.m2-all.cont-r{border-top-right-radius:0;border-bottom-right-radius:0;margin-right:-6px}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 
 @media (max-width:1100px){.board{grid-template-columns:minmax(0,1fr)}.w-schedule,.w-due,.w-focus{grid-column:1;grid-row:auto}}
@@ -1312,7 +1319,21 @@ function paletteColors(s) {
 }
 
 /* ---------- occurrences ---------- */
-function occursOn(ev, dateS) {
+/* Multi-day events (trips, conferences): ev.endDate is the last day. Older events that set "Until"
+   without repeating are treated the same way, so trips saved before this change show up too. */
+function spanEnd(ev) {
+  const end = ev.endDate || ((!ev.repeat || ev.repeat === "none") && ev.until ? ev.until : "");
+  return end && end > ev.date ? end : "";
+}
+function spanDays(ev) { const e = spanEnd(ev); return e ? Math.round((pd(e) - pd(ev.date)) / 864e5) : 0; }
+/* Which day of its span dateS is (0 = first day), or -1 if the event isn't on that day. */
+function spanIndex(ev, dateS) {
+  const n = spanDays(ev);
+  for (let k = 0; k <= n; k++) if (startsOn(ev, k ? ds(addDays(pd(dateS), -k)) : dateS)) return k;
+  return -1;
+}
+function occursOn(ev, dateS) { return spanIndex(ev, dateS) >= 0; }
+function startsOn(ev, dateS) {
   if (ev.date === dateS) return true;
   if (!ev.repeat || ev.repeat === "none" || dateS < ev.date) return false;
   if (ev.until && dateS > ev.until) return false;
@@ -1328,7 +1349,20 @@ function occursOn(ev, dateS) {
 const visibleCat = c => !(S().hidden || []).includes(c);
 function eventsOn(dateS, { all = false } = {}) {
   const out = [];
-  for (const ev of state.events.values()) if ((all || visibleCat(ev.cat)) && occursOn(ev, dateS)) out.push(ev);
+  for (const ev of state.events.values()) {
+    if (!(all || visibleCat(ev.cat))) continue;
+    const k = spanIndex(ev, dateS); if (k < 0) continue;
+    const n = spanDays(ev);
+    if (!n) { out.push(ev); continue; }
+    // A copy for this day only (same id, so tapping it still opens the real event).
+    const day = { ...ev, _day: k + 1, _days: n + 1, _cont: k > 0, _timed: !ev.allDay };
+    if (!ev.allDay) {
+      if (k === 0) day.end = "23:59";
+      else if (k === n) day.start = "00:00";
+      else day.allDay = true;
+    }
+    out.push(day);
+  }
   if (all || visibleCat("class")) out.push(...testEventsOn(dateS));
   return out.sort((a, b) => (a.allDay ? -1 : 0) - (b.allDay ? -1 : 0) || mins(a.start) - mins(b.start));
 }
@@ -1354,7 +1388,7 @@ function checkReminders() {
   if (!S().notif.inapp) return;
   const now = new Date(), t = todayStr(), tm = ds(addDays(now, 1));
   for (const dStr of [t, tm]) for (const ev of eventsOn(dStr, { all: true })) {
-    const r = ev.remind; if (r === null || r === undefined || ev.allDay) continue;
+    const r = ev.remind; if (r === null || r === undefined || ev.allDay || ev._cont) continue;
     const start = pd(dStr); start.setMinutes(mins(ev.start));
     const at = new Date(start - r * 60000), key = ev.id + dStr;
     if (now >= at && now < start && !fired.has(key)) {
@@ -1420,7 +1454,7 @@ async function scheduleNative() {
     for (let i = 0; i < 8; i++) {
       const dStr = ds(addDays(new Date(), i));
       for (const ev of eventsOn(dStr, { all: true })) {
-        const r = ev.remind; if (r === null || r === undefined || ev.allDay) continue;
+        const r = ev.remind; if (r === null || r === undefined || ev.allDay || ev._cont) continue;
         const start = pd(dStr); start.setMinutes(mins(ev.start));
         const at = new Date(start - r * 60000); if (+at <= now + 5000) continue;
         list.push({ id: numId(ev.id + dStr), title: ev.title, body: `${r === 0 ? "Starting now" : r < 60 ? `In ${r} min` : `At ${fmtTimeLong(ev.start)}`}${ev.location ? " · " + ev.location : ""}`, schedule: { at, allowWhileIdle: true }, extra: { date: dStr } });
@@ -1772,7 +1806,7 @@ function calSide() {
   h += `<div class="cs-sum">${evs.length ? `<b>${evs.length}</b> ${evs.length === 1 ? "event" : "events"}${booked ? ` · ${fmtDur(booked)} booked` : ""}` : "Nothing scheduled"}${tks.filter(x => !x.done).length ? ` · <b>${tks.filter(x => !x.done).length}</b> due` : ""}</div>`;
   if (!state.readOnly) h += `<button type="button" class="btn btn-ghost cs-add" data-new="event" data-newdate="${s}">${I.plus}Add to ${n === 0 ? "today" : DOW[d.getDay()] + " " + d.getDate()}</button>`;
   if (dls.length) h += dls.map(p => `<button type="button" class="cs-due" data-openproj="${p.id}">${I.flag}<span>${esc(p.name)}</span><small>project due</small></button>`).join("");
-  h += `<div class="cs-list">${evs.length ? evs.map(e => { const c = catOf(e), past = s < t || (s === t && !e.allDay && mins(e.end || e.start) <= nm); return `<button type="button" class="cs-ev ${past ? "is-past" : ""}" style="--c:${c.color}" data-ev="${e.id}" data-date="${s}"><span class="cs-t">${e.allDay ? "All day" : fmtTime(e.start)}${!e.allDay && e.end ? `<small>${fmtTime(e.end)}</small>` : ""}</span><i></i><span class="cs-m"><b>${esc(e.title)}</b><small>${esc(c.name)}${e.location ? " · " + esc(e.location) : ""}</small></span></button>`; }).join("") : `<p class="cs-empty">A free day. Tap “Add” to plan something.</p>`}</div>`;
+  h += `<div class="cs-list">${evs.length ? evs.map(e => { const c = catOf(e), past = s < t || (s === t && !e.allDay && mins(e.end || e.start) <= nm); return `<button type="button" class="cs-ev ${past ? "is-past" : ""}" style="--c:${c.color}" data-ev="${e.id}" data-date="${s}"><span class="cs-t">${e.allDay ? "All day" : fmtTime(e.start)}${!e.allDay && e.end ? `<small>${fmtTime(e.end)}</small>` : ""}</span><i></i><span class="cs-m"><b>${esc(e.title)}</b><small>${e._days ? `Day ${e._day} of ${e._days} · ` : ""}${esc(c.name)}${e.location ? " · " + esc(e.location) : ""}</small></span></button>`; }).join("") : `<p class="cs-empty">A free day. Tap “Add” to plan something.</p>`}</div>`;
   if (tks.length) h += `<div class="cs-h">Due this day</div><div class="tasks">${tks.map(x => taskRow(x, x.project, true)).join("")}</div>`;
   h += `<div class="cs-h">Show on calendar</div><div class="cs-cals">${calToggles().map(([id, name, color, on, kind]) => `<button type="button" class="cs-cal ${kind}" style="--c:${color}" data-filter="${id}" role="switch" aria-checked="${on}"><i>${I.check}</i><span>${esc(name)}</span></button>`).join("")}</div>`;
   return h + `</aside>`;
@@ -1799,7 +1833,7 @@ function monthView() {
     h += `<div class="m2-cell ${d.getMonth() !== c.getMonth() ? "out" : ""} ${s === t ? "today" : ""} ${s === sel ? "sel" : ""} ${s < t ? "past" : ""} ${wk ? "wk" : ""}" data-cellday="${s}" role="button" tabindex="0" aria-label="${fmtShortDate(s)}, ${items.length} items"><span class="m2-dn">${d.getDate() === 1 ? `<small>${MONTHS[d.getMonth()].slice(0, 3)}</small>` : ""}<b>${d.getDate()}</b></span><div class="m2-items">`;
     items.slice(0, shown).forEach(it => {
       if (it.k === "d") h += deadlinePill(it.p);
-      else if (it.k === "a") h += `<button type="button" class="m2-all" style="--c:${catOf(it.e).color}" data-ev="${it.e.id}" data-date="${s}">${esc(it.e.title)}</button>`;
+      else if (it.k === "a") h += `<button type="button" class="m2-all ${it.e._cont ? "cont" : ""} ${it.e._days && it.e._day < it.e._days ? "cont-r" : ""}" style="--c:${catOf(it.e).color}" data-ev="${it.e.id}" data-date="${s}" title="${esc(it.e.title)}${it.e._days ? ` · day ${it.e._day} of ${it.e._days}` : ""}">${it.e._cont && d.getDay() !== S().weekStart && !(it.e._timed && it.e._day === 2) ? "&nbsp;" : esc(it.e.title)}</button>`;
       else if (it.k === "e") { h += `<button type="button" class="m2-ev" title="${fmtTime(it.e.start)} ${esc(it.e.title)}" style="--c:${catOf(it.e).color}" data-ev="${it.e.id}" data-date="${s}"><i></i><span class="n">${esc(it.e.title)}</span></button>`; }
       else h += `<button type="button" class="m2-task ${it.x.done ? "done" : ""}" style="--c:${it.x.project.color}" data-openproj="${it.x.project.id}"><i></i><span class="n">${esc(it.x.title)}</span></button>`;
     });
@@ -2447,7 +2481,7 @@ function eventEditor(ev, dateS, presetCat, opts) {
   <div class="custom-cat" id="ev-custom" ${cat === "custom" ? "" : "hidden"}><div class="row-custom"><input type="color" id="ev-ccolor" value="${ev.customColor || "#8B929C"}" aria-label="Custom colour"><input class="inp" id="ev-cname" maxlength="40" placeholder="Name it, e.g. Volunteering, Car, Birthday" value="${esc(ev.customLabel || "")}" aria-label="Custom label"></div><label class="keep"><button type="button" class="toggle" role="switch" id="ev-ckeep" aria-checked="false" aria-label="Save as a category"></button>Save as a category for next time</label></div>
   <div class="pay-block" id="ev-pay" ${isPaid({ cat }) ? "" : "hidden"}><div class="row-pay"><label class="field"><span>Hourly rate</span>${moneyInput("ev-wage", "", ev.wage, pay().wage ? String(pay().wage) : "0.00", "Hourly rate for this shift")}</label><label class="field"><span>Unpaid break</span><select class="inp" id="ev-break">${[0, 15, 30, 45, 60].map(m => `<option value="${m}" ${(ev.breakMin || 0) === m ? "selected" : ""}>${m ? m + " min" : "None"}</option>`).join("")}</select></label></div><div id="ev-occ"></div><span class="hint" id="ev-payhint"></span></div>
   <div class="row3"><label class="field"><span>Date</span><input class="inp" type="date" id="ev-date" value="${ev.date}"></label><label class="field"><span>Starts</span><input class="inp" type="time" id="ev-start" value="${ev.start || ""}"></label><label class="field"><span>Ends</span><input class="inp" type="time" id="ev-end" value="${ev.end || ""}"></label></div>
-  <label style="display:flex;align-items:center;gap:10px;font-size:14px"><button type="button" class="toggle" role="switch" id="ev-allday" aria-checked="${!!ev.allDay}" aria-label="All day"></button>All day</label>
+  <div class="row2 ev-span"><label class="field"><span>Ends on <small>for trips &amp; multi-day</small></span><input class="inp" type="date" id="ev-enddate" value="${spanEnd(ev)}" min="${ev.date}"></label><label class="ev-allday-l"><button type="button" class="toggle" role="switch" id="ev-allday" aria-checked="${!!ev.allDay}" aria-label="All day"></button>All day</label></div>
   <div class="row2"><label class="field"><span>Repeats</span><select class="inp" id="ev-repeat">${[["none", "Doesn't repeat"], ["daily", "Every day"], ["weekdays", "Weekdays"], ["weekly", "Every week"], ["biweekly", "Every 2 weeks"], ["monthly", "Every month"]].map(([v, l]) => `<option value="${v}" ${ev.repeat === v ? "selected" : ""}>${l}</option>`).join("")}</select></label><label class="field"><span>Until</span><input class="inp" type="date" id="ev-until" value="${ev.until || ""}"></label></div>
   <div class="row2"><label class="field"><span>Location</span><input class="inp" id="ev-loc" value="${esc(ev.location)}" placeholder="Room, address or link"></label><label class="field"><span>Reminder</span><select class="inp" id="ev-remind">${REMIND.map(([v, l]) => `<option value="${v === null ? "" : v}" ${ev.remind === v ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
   <label class="field"><span>Notes</span><textarea class="inp" id="ev-notes" placeholder="Bring textbook, ask about extension…">${esc(ev.notes)}</textarea></label>
@@ -2480,7 +2514,8 @@ function eventEditor(ev, dateS, presetCat, opts) {
       if (!title) { $("#ev-title").focus(); $("#ev-title").placeholder = "Give it a name first"; return; }
       const r = $("#ev-remind").value;
       let start = $("#ev-start").value, end = $("#ev-end").value;
-      if (end && start && mins(end) < mins(start)) end = start;
+      const multiDay = ($("#ev-enddate")?.value || "") > ($("#ev-date").value || d);
+      if (end && start && mins(end) < mins(start) && !multiDay) end = start;
       let saveCat = cat, extra = {};
       if (isPaid({ cat })) {
         extra.wage = numOrNull($("#ev-wage").value); extra.breakMin = +$("#ev-break").value || 0;
@@ -2498,7 +2533,7 @@ function eventEditor(ev, dateS, presetCat, opts) {
         if ($("#ev-ckeep").getAttribute("aria-checked") === "true") { const id = "c" + uid().slice(0, 8); S().categories = [...cats(), { id, name: label, color }]; store.saveSettings(); saveCat = id; Object.assign(extra, { customLabel: "", customColor: "" }); toast("Category added", `${label} is now in your categories.`); }
         else Object.assign(extra, { customLabel: label, customColor: color });
       }
-      store.saveEvent({ ...ev, ...extra, title, cat: saveCat, date: $("#ev-date").value || d, start, end, allDay: $("#ev-allday").getAttribute("aria-checked") === "true", location: $("#ev-loc").value.trim(), notes: $("#ev-notes").value.trim(), repeat: $("#ev-repeat").value, until: $("#ev-until").value, remind: r === "" ? null : Number(r) });
+      store.saveEvent({ ...ev, ...extra, title, cat: saveCat, date: $("#ev-date").value || d, start, end, allDay: $("#ev-allday").getAttribute("aria-checked") === "true", location: $("#ev-loc").value.trim(), notes: $("#ev-notes").value.trim(), repeat: $("#ev-repeat").value, until: $("#ev-repeat").value === "none" ? "" : $("#ev-until").value, endDate: (() => { const sd = $("#ev-date").value || d, ed = $("#ev-enddate").value, un = $("#ev-until").value; return ed && ed > sd ? ed : ($("#ev-repeat").value === "none" && un > sd ? un : ""); })(), remind: r === "" ? null : Number(r) });
       closeModal(); toast(isNew ? "Event added" : "Event saved", `${title} · ${fmtShortDate($("#ev-date")?.value || d)}`);
     };
     $("#ev-save").onclick = save;
